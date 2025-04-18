@@ -1,130 +1,178 @@
-# app.py
-import streamlit as st
-import pandas as pd
-from datetime import datetime
-import database as db # Import our database functions
+import matplotlib.pyplot as plt
+import matplotlib.ticker as mticker
+import numpy as np
+import sys # For exiting gracefully
 
-# --- Page Configuration ---
-st.set_page_config(
-    page_title="Expense Tracker",
-    page_icon="💰",
-    layout="centered" # Can be "wide" or "centered"
-)
+def calculate_compound_interest(principal, annual_rate_percent, years, monthly_payment=0, compounds_per_year=12):
+    """
+    Calculates the year-by-year balance for compound interest.
 
-# --- Predefined Categories ---
-# (You can customize or load these from a file/db later)
-INCOME_CATEGORIES = ["Salary", "Freelance", "Investment", "Gift", "Other"]
-EXPENSE_CATEGORIES = ["Food", "Transport", "Rent", "Utilities", "Entertainment", "Shopping", "Health", "Education", "Other"]
+    Args:
+        principal (float): The initial amount of money.
+        annual_rate_percent (float): The annual interest rate (as a percentage).
+        years (int): The number of years to calculate for.
+        monthly_payment (float, optional): The regular monthly payment added. Defaults to 0.
+        compounds_per_year (int, optional): How many times interest is compounded per year. Defaults to 12 (monthly).
 
-# --- App Title ---
-st.title("💰 Personal Expense Tracker")
-st.markdown("Track your income and expenses efficiently.")
+    Returns:
+        tuple: A tuple containing:
+            - list: A list of years (0 to `years`).
+            - list: A list of corresponding balances at the end of each year.
+    """
+    if annual_rate_percent < 0 or principal < 0 or years < 0 or monthly_payment < 0:
+        print("Error: Principal, rate, years, and monthly payment cannot be negative.")
+        return None, None # Indicate error
 
-# --- Input Form ---
-st.header("Add New Transaction")
+    if compounds_per_year <= 0:
+        print("Error: Compounding frequency must be positive.")
+        return None, None # Indicate error
 
-# Use columns for layout
-col1, col2 = st.columns(2)
-
-with col1:
-    trans_type = st.selectbox("Type", ["Expense", "Income"], key="trans_type_input")
-    if trans_type == "Income":
-        category = st.selectbox("Category", INCOME_CATEGORIES, key="income_cat_input")
+    # Convert annual rate percentage to a decimal rate per compounding period
+    # Handle the case where rate is 0 separately to avoid division by zero later
+    if annual_rate_percent == 0:
+        rate_per_period = 0
     else:
-        category = st.selectbox("Category", EXPENSE_CATEGORIES, key="expense_cat_input")
+        rate_per_period = (annual_rate_percent / 100.0) / compounds_per_year
 
-with col2:
-    amount = st.number_input("Amount", min_value=0.01, format="%.2f", key="amount_input")
-    trans_date = st.date_input("Date", datetime.now(), key="date_input")
+    yearly_balances = [principal]
+    current_balance = principal
+    total_periods = years * compounds_per_year
 
-description = st.text_area("Description (Optional)", key="desc_input")
+    periods_calculated = 0
+    for year in range(1, years + 1):
+        for _ in range(compounds_per_year):
+            periods_calculated += 1
+            # Calculate interest for the period
+            interest = current_balance * rate_per_period
+            current_balance += interest
+            # Add monthly payment (if any) *after* compounding for the period
+            current_balance += monthly_payment
 
-if st.button("Add Transaction", key="add_button"):
-    if not category:
-        st.warning("Please select a category.")
-    elif amount <= 0:
-        st.warning("Amount must be positive.")
-    else:
-        db.add_transaction(trans_type, trans_date, category, amount, description)
-        st.success(f"{trans_type} of {amount:.2f} added successfully!")
-        # Clear inputs after adding (optional, requires rerunning or more complex state management)
-        # Consider using st.form for better input handling if needed
+            # Ensure we don't exceed the total number of periods for the final year
+            if periods_calculated >= total_periods:
+                break
 
-# --- Display Transactions ---
-st.header("Transaction History")
+        yearly_balances.append(current_balance)
+        # Break outer loop if inner loop already hit the total period limit
+        if periods_calculated >= total_periods:
+            break
 
-transactions_df = db.get_transactions()
+    # Ensure the years list matches the balances list length
+    year_list = list(range(years + 1))
+    # If calculation stopped early due to periods, trim year list
+    if len(yearly_balances) < len(year_list):
+         year_list = year_list[:len(yearly_balances)]
 
-if not transactions_df.empty:
-    # Format date for display (optional)
-    transactions_df_display = transactions_df.copy()
-    transactions_df_display['date'] = transactions_df_display['date'].dt.strftime('%Y-%m-%d')
+    return year_list, yearly_balances
 
-    # Basic filtering (Example)
-    st.sidebar.header("Filter Transactions")
-    filter_type = st.sidebar.multiselect("Filter by Type", options=transactions_df['type'].unique(), default=transactions_df['type'].unique())
-    filter_category = st.sidebar.multiselect("Filter by Category", options=transactions_df['category'].unique(), default=transactions_df['category'].unique())
+def get_float_input(prompt):
+    """Gets positive float input from the user with validation."""
+    while True:
+        try:
+            value = float(input(prompt))
+            if value >= 0:
+                return value
+            else:
+                print("Please enter a non-negative number.")
+        except ValueError:
+            print("Invalid input. Please enter a number.")
 
-    # Apply filters
-    filtered_df = transactions_df_display[
-        (transactions_df_display['type'].isin(filter_type)) &
-        (transactions_df_display['category'].isin(filter_category))
-    ]
+def get_int_input(prompt):
+    """Gets positive integer input from the user with validation."""
+    while True:
+        try:
+            value = int(input(prompt))
+            if value >= 0:
+                return value
+            else:
+                print("Please enter a non-negative whole number.")
+        except ValueError:
+            print("Invalid input. Please enter a whole number.")
 
-    st.dataframe(filtered_df, use_container_width=True, hide_index=True) # Display the filtered table
+def main():
+    """Main function to run the compound interest calculator."""
+    scenarios = [] # List to store results for plotting
 
-    # --- Summary ---
-    st.header("Summary")
-    total_income = transactions_df[transactions_df['type'] == 'Income']['amount'].sum()
-    total_expense = transactions_df[transactions_df['type'] == 'Expense']['amount'].sum()
-    balance = total_income - total_expense
+    print("--- Compound Interest Calculator ---")
 
-    col_summary1, col_summary2, col_summary3 = st.columns(3)
-    col_summary1.metric("Total Income", f"{total_income:,.2f}")
-    col_summary2.metric("Total Expenses", f"{total_expense:,.2f}")
-    col_summary3.metric("Balance", f"{balance:,.2f}")
+    while True:
+        print("\nEnter details for a new scenario:")
+        principal = get_float_input("Initial Principal Amount (e.g., 1000): $")
+        annual_rate_percent = get_float_input("Annual Interest Rate (e.g., 5 for 5%): % ")
+        years = get_int_input("Number of Years (e.g., 10): ")
 
-    # --- Delete Transaction ---
-    st.sidebar.header("Delete Transaction")
-    if not transactions_df.empty:
-        # Create a list of strings for the selectbox: "ID: Date - Type - Category - Amount"
-        transaction_options = [
-            f"{row['id']}: {row['date'].strftime('%Y-%m-%d')} - {row['type']} - {row['category']} - {row['amount']:.2f}"
-            for index, row in transactions_df.iterrows()
-        ]
-        trans_to_delete_display = st.sidebar.selectbox("Select Transaction to Delete", options=[""] + transaction_options)
+        monthly_payment = 0.0
+        while True:
+            add_payment = input("Add regular monthly payments? (yes/no): ").strip().lower()
+            if add_payment in ['yes', 'y']:
+                monthly_payment = get_float_input("Monthly Payment Amount: $")
+                break
+            elif add_payment in ['no', 'n']:
+                monthly_payment = 0.0
+                break
+            else:
+                print("Invalid input. Please answer 'yes' or 'no'.")
 
-        if trans_to_delete_display:
-            # Extract the ID from the selected string
-            trans_id_to_delete = int(trans_to_delete_display.split(":")[0])
+        # --- Calculation ---
+        year_list, balance_list = calculate_compound_interest(principal, annual_rate_percent, years, monthly_payment)
 
-            if st.sidebar.button("Delete Selected Transaction", type="primary"):
-                if db.delete_transaction(trans_id_to_delete):
-                    st.sidebar.success("Transaction deleted successfully!")
-                    st.experimental_rerun() # Rerun the app to refresh the data
-                else:
-                    st.sidebar.error("Failed to delete transaction.")
-    else:
-        st.sidebar.write("No transactions to delete.")
+        if year_list is None: # Check if calculation failed
+             print("Skipping this scenario due to input error.")
+        else:
+             # --- Store scenario details for plotting ---
+             label = f"P=${principal:,.0f}, r={annual_rate_percent}%, Yrs={years}"
+             if monthly_payment > 0:
+                 label += f", PMT=${monthly_payment:,.0f}/mo"
+             scenarios.append({
+                 "years": year_list,
+                 "balances": balance_list,
+                 "label": label,
+                 "final_balance": balance_list[-1] # Store final balance for sorting legend
+             })
+             print(f"Scenario added. Final balance after {years} years: ${balance_list[-1]:,.2f}")
 
 
-else:
-    st.info("No transactions recorded yet. Add some using the form above!")
+        # --- Ask to add another scenario ---
+        while True:
+            another = input("\nAdd another scenario to compare? (yes/no): ").strip().lower()
+            if another in ['yes', 'y', 'no', 'n']:
+                break
+            else:
+                print("Invalid input. Please answer 'yes' or 'no'.")
 
-# --- Simple Plot (Example) ---
-if not transactions_df.empty and total_expense > 0:
-    st.header("Expense Breakdown by Category")
-    expense_df = transactions_df[transactions_df['type'] == 'Expense']
-    category_expenses = expense_df.groupby('category')['amount'].sum()
+        if another in ['no', 'n']:
+            break
 
-    if not category_expenses.empty:
-        st.bar_chart(category_expenses)
-        # For a pie chart (requires plotly usually, but basic altair/vega-lite might work)
-        # import altair as alt
-        # chart = alt.Chart(category_expenses.reset_index()).mark_arc().encode(
-        #     theta=alt.Theta(field="amount", type="quantitative"),
-        #     color=alt.Color(field="category", type="nominal")
-        # )
-        # st.altair_chart(chart, use_container_width=True)
-    else:
-        st.write("No expenses to plot yet.")
+    # --- Plotting ---
+    if not scenarios:
+        print("\nNo valid scenarios were calculated. Exiting.")
+        sys.exit() # Exit if no scenarios were added
+
+    print("\nGenerating plot...")
+    fig, ax = plt.subplots(figsize=(10, 6)) # Create figure and axes object
+
+    # Sort scenarios by final balance for a potentially clearer legend
+    scenarios.sort(key=lambda x: x['final_balance'], reverse=True)
+
+    # Plot each scenario
+    for scenario in scenarios:
+        ax.plot(scenario["years"], scenario["balances"], marker='o', linestyle='-', markersize=4, label=scenario["label"])
+
+    # --- Formatting the plot ---
+    ax.set_title('Compound Interest Growth Comparison')
+    ax.set_xlabel('Years')
+    ax.set_ylabel('Account Balance ($)')
+
+    # Format y-axis to display currency
+    formatter = mticker.FormatStrFormatter('$%,.0f') # Show $ sign, comma separator, no decimals
+    ax.yaxis.set_major_formatter(formatter)
+
+    ax.legend(title="Scenarios (Highest final balance first)") # Add legend to identify lines
+    ax.grid(True, linestyle='--', alpha=0.6) # Add grid for readability
+    plt.tight_layout() # Adjust layout to prevent labels overlapping
+    plt.show() # Display the plot
+
+    print("\nPlot displayed. Close the plot window to exit the program.")
+
+if __name__ == "__main__":
+    main()
